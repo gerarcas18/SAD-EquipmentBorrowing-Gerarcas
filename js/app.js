@@ -6,11 +6,20 @@ const msg=(s,err=false)=>{$("appMessage").textContent=s;$("appMessage").classNam
 const loginMsg=(s,err=false)=>{$("loginMessage").textContent=s;$("loginMessage").className="message"+(err?" error":"");};
 const status=t=>t.status!=="Returned"&&t.due_date<today()?"Overdue":t.status;
 async function init(){
- $("todayLabel").textContent=new Date().toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"});
- $("dateBorrowed").value=today();$("dateBorrowed").max=today();
- const {data:{session},error}=await supabaseClient.auth.getSession();
- if(error)loginMsg(error.message,true);
- if(session)await showApp(session.user);else $("authView").classList.remove("hidden");
+ try {
+  if(!window.supabase || typeof supabaseClient==="undefined") throw new Error("Supabase library did not load. Please refresh the page or try another browser.");
+  $("todayLabel").textContent=new Date().toLocaleDateString(undefined,{year:"numeric",month:"short",day:"numeric"});
+  $("dateBorrowed").value=today();$("dateBorrowed").max=today();
+  loginMsg("Connection ready. Please sign in.");
+  const {data:{session},error}=await supabaseClient.auth.getSession();
+  if(error) throw error;
+  if(session) await showApp(session.user);
+  else $("authView").classList.remove("hidden");
+ } catch(error) {
+  $("authView").classList.remove("hidden");
+  loginMsg("Connection problem: "+(error.message||"Unable to initialize Supabase."),true);
+  console.error("Initialization error:",error);
+ }
 }
 async function showApp(user){currentUser=user;$("authView").classList.add("hidden");$("appView").classList.remove("hidden");$("signedInAs").textContent=user.email||"Signed in";await refresh();}
 async function refresh(){
@@ -39,7 +48,26 @@ function render(){
 function section(name){["dashboard","equipment","transactions"].forEach(s=>$(`${s}Section`).classList.toggle("hidden",s!==name));document.querySelectorAll("[data-section]").forEach(b=>b.classList.toggle("active",b.dataset.section===name));$("pageTitle").textContent=name[0].toUpperCase()+name.slice(1);}
 document.querySelectorAll("[data-section]").forEach(b=>b.addEventListener("click",()=>section(b.dataset.section)));
 document.querySelectorAll("[data-close]").forEach(b=>b.addEventListener("click",()=>$(b.dataset.close).close()));
-$("loginForm").addEventListener("submit",async e=>{e.preventDefault();loginMsg("Signing in…");const {data,error}=await supabaseClient.auth.signInWithPassword({email:$("email").value.trim(),password:$("password").value});if(error)loginMsg(error.message,true);else await showApp(data.user);});
+$("loginForm").addEventListener("submit",async e=>{
+ e.preventDefault();
+ const button=$("loginForm").querySelector('button[type="submit"]');
+ button.disabled=true;button.textContent="Signing in…";loginMsg("Connecting to Supabase…");
+ try {
+  if(!navigator.onLine) throw new Error("Your device appears to be offline. Check your internet connection.");
+  if(!window.supabase || typeof supabaseClient==="undefined") throw new Error("Supabase client is not loaded. Refresh the page and try again.");
+  const email=$("email").value.trim(),password=$("password").value;
+  const {data,error}=await supabaseClient.auth.signInWithPassword({email,password});
+  if(error) throw error;
+  if(!data.user) throw new Error("Sign-in did not return a user. Please check your account.");
+  loginMsg("Sign-in successful. Loading dashboard…");
+  await showApp(data.user);
+ } catch(error) {
+  console.error("Sign-in error:",error);
+  loginMsg(error.message||"Sign-in failed. Please try again.",true);
+ } finally {
+  button.disabled=false;button.textContent="Sign in";
+ }
+});
 $("logoutBtn").addEventListener("click",async()=>{const {error}=await supabaseClient.auth.signOut();if(error){msg(error.message,true);return;}currentUser=null;$("appView").classList.add("hidden");$("authView").classList.remove("hidden");});
 $("addEquipmentBtn").addEventListener("click",()=>{$("equipmentForm").reset();$("equipmentId").value="";$("equipmentDialogTitle").textContent="Add equipment";$("equipmentDialog").showModal();});
 $("equipmentRows").addEventListener("click",async e=>{
@@ -70,5 +98,7 @@ $("transactionRows").addEventListener("click",async e=>{
 });
 ["equipmentSearch","transactionSearch"].forEach(id=>$(id).addEventListener("input",render));
 ["availabilityFilter","statusFilter"].forEach(id=>$(id).addEventListener("change",render));
-supabaseClient.auth.onAuthStateChange((_event,session)=>{if(!session&&currentUser){currentUser=null;$("appView").classList.add("hidden");$("authView").classList.remove("hidden");}});
+if(window.supabase && typeof supabaseClient!=="undefined"){
+ supabaseClient.auth.onAuthStateChange((_event,session)=>{if(!session&&currentUser){currentUser=null;$("appView").classList.add("hidden");$("authView").classList.remove("hidden");}});
+}
 init();
